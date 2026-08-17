@@ -1,0 +1,26 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Validate package metadata
+        run: python -m json.tool package.json >/dev/null
+      - name: Compile plugin
+        run: python -m py_compile plugins/fengchaonextsignin/__init__.py plugins/fengchaonextsignin/client.py
+      - name: Run tests
+        run: pytest -q

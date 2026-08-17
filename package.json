@@ -1,0 +1,15 @@
+{
+  "FengchaoNextSignin": {
+    "name": "蜂巢新版签到",
+    "description": "适配蜂巢 Next.js 新版登录、会话状态与每日签到接口",
+    "labels": "签到,蜂巢,论坛,Next.js",
+    "version": "1.0.0",
+    "icon": "https://pting.club/favicon.ico",
+    "author": "lesir831",
+    "level": 2,
+    "v2": true,
+    "history": {
+      "v1.0.0": "适配 /api/auth/login、bbs_session、/api/auth/me 与 /api/check-in 新接口"
+    }
+  }
+}
