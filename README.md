@@ -38,6 +38,7 @@ API：
 - 保存用户摘要及签到历史
 - 支持 MoviePilot 系统代理
 - 检测站点登录验证码模式；启用交互式验证码时明确停止并报告原因
+- 使用仓库内维护的原蜂巢签到插件图标
 
 安装“蜂巢新版签到”前，请停用旧版“蜂巢签到”，避免两个插件同时执行。
 
@@ -60,6 +61,7 @@ API：
 
 ```text
 package.json                         # MoviePilot 插件索引
+icons/                               # 插件图标资源
 plugins/
   fengchaonextsignin/                # 蜂巢新版签到
     __init__.py

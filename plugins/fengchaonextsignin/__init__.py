@@ -22,8 +22,8 @@ from .client import FengchaoApiError, FengchaoClient, SignInResult
 class FengchaoNextSignin(_PluginBase):
     plugin_name = "蜂巢新版签到"
     plugin_desc = "适配蜂巢 Next.js 新版登录与签到接口。"
-    plugin_icon = "https://pting.club/favicon.ico"
-    plugin_version = "1.0.0"
+    plugin_icon = "https://raw.githubusercontent.com/lesir831/moviepilot-plugins/main/icons/fengchao.png"
+    plugin_version = "1.0.1"
     plugin_author = "lesir831"
     author_url = "https://github.com/lesir831"
     plugin_config_prefix = "fengchaonextsignin_"
