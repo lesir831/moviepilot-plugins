@@ -22,6 +22,6 @@ jobs:
       - name: Validate package metadata
         run: python -m json.tool package.json >/dev/null
       - name: Compile plugin
-        run: python -m py_compile plugins/fengchaonextsignin/__init__.py plugins/fengchaonextsignin/client.py
+        run: python -m compileall -q plugins/fengchaonextsignin plugins/brushflow -x "node_modules"
       - name: Run tests
         run: pytest -q

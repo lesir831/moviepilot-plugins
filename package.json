@@ -1,4 +1,18 @@
 {
+  "BrushFlow": {
+    "name": "站点刷流",
+    "description": "基于原 5.2.3 的 fork，任务内配置杜比 TOTP，下载验证异常时自动认证并重试",
+    "labels": "刷流,杜比,TOTP",
+    "version": "5.2.4",
+    "icon": "brush-flow.png",
+    "author": "jxxghp,InfinityPacer,Seed680; lesir831 (TOTP fork)",
+    "level": 2,
+    "v2": true,
+    "history": {
+      "v5.2.4": "新增任务级杜比 TOTP 自动认证；校验种子内容；兼容 qB 添加结果元组；保留原任务与历史"
+    },
+    "system_version": ">=2.14.6"
+  },
   "FengchaoNextSignin": {
     "name": "蜂巢新版签到",
     "description": "适配蜂巢 Next.js 新版登录、会话状态与每日签到接口",
