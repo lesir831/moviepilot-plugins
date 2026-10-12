@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import Query
+from torrentool.api import Torrent
 
 from app import schemas
 from app.api.endpoints.plugin import register_plugin_api
@@ -223,7 +224,7 @@ class BrushFlow(_PluginBase):
     plugin_name = "站点刷流"
     plugin_desc = "自动托管多个站点刷流任务，并独立调度、统计与诊断。"
     plugin_icon = "brush-flow.png"
-    plugin_version = "5.2.4"
+    plugin_version = "5.2.5"
     plugin_author = "jxxghp,InfinityPacer,Seed680; lesir831 (TOTP fork)"
     author_url = "https://github.com/lesir831/moviepilot-plugins"
     plugin_config_prefix = "brushflow_"
@@ -1728,7 +1729,7 @@ class BrushFlow(_PluginBase):
         unmanaged_tasks: Dict[str, dict],
         seeding_torrents_dict: Dict[str, Any],
     ) -> None:
-        """按任务唯一标签同步 qBittorrent 中的纳管和移除状态"""
+        """按内部 Hash 归属和公共刷流标签同步纳管状态，兼容旧任务标签。"""
         task = self._get_task_config()
         if not task or not DownloaderHelper().is_downloader("qbittorrent", service=self.service_info):
             return
@@ -1775,11 +1776,22 @@ class BrushFlow(_PluginBase):
             )
 
     def _is_primary_task_for_torrent(self, task: BrushTaskConfig, torrent: Any) -> bool:
-        """仅让同站点第一项任务接管没有唯一标签的旧版刷流种子"""
+        """Keep persisted ownership; only adopt unowned torrents on this downloader."""
+        torrent_hash = self.__get_hash(torrent)
+        downloader_tasks = [item for item in self._task_configs.values()
+                            if item.downloader == task.downloader]
+        owners = [item.id for item in downloader_tasks
+                  if torrent_hash in (self._get_task_data(item.id, "torrents") or {})]
+        if owners:
+            return task.id in owners
+        legacy_owners = [item.id for item in downloader_tasks
+                         if item.brush_tag in self.__get_label(torrent)]
+        if legacy_owners:
+            return task.id in legacy_owners
         site_id, _ = self.__get_site_by_torrent(torrent)
         if site_id != task.site_id:
             return False
-        site_tasks = [item for item in self._task_configs.values() if item.site_id == site_id]
+        site_tasks = [item for item in downloader_tasks if item.site_id == site_id]
         return bool(site_tasks and site_tasks[0].id == task.id)
 
     def __evaluate_conditions_for_delete(
@@ -2529,6 +2541,24 @@ class BrushFlow(_PluginBase):
         finally:
             client.close()
 
+    @staticmethod
+    def _content_info_hash(content: Union[str, bytes]) -> Optional[str]:
+        """Resolve a v1 torrent/magnet hash without adding downloader tags."""
+        try:
+            if isinstance(content, bytes):
+                return Torrent.from_string(content).info_hash.lower()
+            if isinstance(content, str) and content.startswith("magnet:"):
+                for xt in parse_qs(urlparse(content).query).get("xt", []):
+                    if xt.lower().startswith("urn:btih:"):
+                        value = xt[9:]
+                        if re.fullmatch(r"[0-9a-fA-F]{40}", value):
+                            return value.lower()
+                        if re.fullmatch(r"[A-Z2-7a-z]{32}", value):
+                            return base64.b32decode(value.upper()).hex()
+        except Exception:
+            pass
+        return None
+
     def __download(self, torrent: TorrentInfo) -> Optional[str]:
         """按当前任务配置向 qBittorrent 或 Transmission 添加种子"""
         task = self._get_task_config()
@@ -2563,7 +2593,6 @@ class BrushFlow(_PluginBase):
         if downloader_helper.is_downloader("qbittorrent", service=service):
             up_limit = up_speed * 1024 if up_speed else None
             down_limit = down_speed * 1024 if down_speed else None
-            random_tag = StringUtils.generate_random_str(10)
             if isinstance(torrent_content, str) and not torrent_content.startswith("magnet"):
                 response = RequestUtils(cookies=cookies, proxies=proxies, ua=torrent.site_ua).get_res(
                     url=torrent_content
@@ -2575,7 +2604,7 @@ class BrushFlow(_PluginBase):
                 download_dir=task.save_path,
                 cookie=cookies,
                 category=task.qb_category,
-                tag=["已整理", self.GLOBAL_BRUSH_TAG, task.brush_tag, random_tag],
+                tag=["已整理", self.GLOBAL_BRUSH_TAG],
                 upload_limit=up_limit,
                 download_limit=down_limit,
             )
@@ -2585,10 +2614,18 @@ class BrushFlow(_PluginBase):
                 return None
             if isinstance(add_result, tuple) and len(add_result) > 1 and add_result[1]:
                 return add_result[1][0]
-            torrent_hash = downloader.get_torrent_id_by_tag(tags=random_tag)
-            if not torrent_hash:
-                logger.error(f"刷流任务 [{task.name}] 获取种子 Hash 失败")
-            return torrent_hash
+            # Older qB versions return only success. Resolve the hash from the input
+            # and confirm that exact torrent exists; no temporary tags are needed.
+            torrent_hash = self._content_info_hash(torrent_content)
+            if torrent_hash:
+                for attempt in range(5):
+                    torrents, error = downloader.get_torrents(ids=[torrent_hash])
+                    if not error and any(self.__get_hash(item).lower() == torrent_hash for item in torrents or []):
+                        return torrent_hash
+                    if attempt < 4:
+                        time.sleep(1)
+            logger.error(f"刷流任务 [{task.name}] 获取种子 Hash 失败")
+            return None
         if downloader_helper.is_downloader("transmission", service=service):
             if isinstance(torrent_content, str) and not torrent_content.startswith("magnet"):
                 response = RequestUtils(cookies=cookies, proxies=proxies, ua=torrent.site_ua).get_res(
@@ -2600,7 +2637,7 @@ class BrushFlow(_PluginBase):
                 content=torrent_content,
                 download_dir=task.save_path,
                 cookie=cookies,
-                labels=["已整理", self.GLOBAL_BRUSH_TAG, task.brush_tag],
+                labels=["已整理", self.GLOBAL_BRUSH_TAG],
             )
             if not added_torrent:
                 return None
@@ -2737,14 +2774,18 @@ class BrushFlow(_PluginBase):
         return result
 
     def __get_downloading_count(self) -> int:
-        """获取带当前任务唯一标签的下载中种子数量"""
+        """用任务持久化 Hash 统计下载数量，避免依赖任务标签。"""
         task = self._get_task_config()
         downloader = self.downloader
         if not task or not downloader:
             return 0
         try:
-            torrents = downloader.get_downloading_torrents(tags=task.brush_tag)
-            return len(torrents or [])
+            records = {key: row for key, row in (self._get_task_data(task.id, "torrents") or {}).items()
+                       if not row.get("deleted")}
+            if not records:
+                return 0
+            torrents = downloader.get_downloading_torrents(ids=list(records), tags=self.GLOBAL_BRUSH_TAG)
+            return sum(1 for torrent in torrents or [] if self.__get_hash(torrent) in records)
         except Exception as err:
             logger.error(f"获取任务 [{task.name}] 下载数量失败：{str(err)}")
             return 0

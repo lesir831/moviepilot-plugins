@@ -79,6 +79,7 @@ def test_dolby_bytes_reach_qb_once_without_legacy_fetch(download_env):
     assert p._BrushFlow__download(t) == 'infohash'
     assert q.add_torrent.call_args.kwargs['content'] == b'torrent-bytes'
     assert q.add_torrent.call_args.kwargs['cookie'] is None
+    assert q.add_torrent.call_args.kwargs['tag'] == ['已整理', '刷流']
     q.get_torrent_id_by_tag.assert_not_called()
     get.assert_not_called()
 
@@ -93,8 +94,11 @@ def test_qb_failure_tuple_does_not_poll_hash(download_env):
 def test_old_qb_boolean_response_supported(download_env):
     p,q,_,t,_ = download_env
     q.add_torrent.return_value = True
-    q.get_torrent_id_by_tag.return_value = 'old-hash'
+    p._content_info_hash = Mock(return_value='old-hash')
+    q.get_torrents.return_value = ([{'hash':'old-hash'}],False)
     assert p._BrushFlow__download(t) == 'old-hash'
+    q.get_torrents.assert_called_once_with(ids=['old-hash'])
+    q.get_torrent_id_by_tag.assert_not_called()
 
 
 def test_transmission_uses_same_recovered_bytes(download_env):
@@ -102,6 +106,7 @@ def test_transmission_uses_same_recovered_bytes(download_env):
     helper.is_downloader.side_effect = lambda kind,**kw: kind=='transmission'
     q.add_torrent.return_value = SimpleNamespace(hashString='tr-hash')
     assert p._BrushFlow__download(t) == 'tr-hash'
+    assert q.add_torrent.call_args.kwargs['labels'] == ['已整理', '刷流']
     assert q.add_torrent.call_args.kwargs['content'] == b'torrent-bytes'
     get.assert_not_called()
 
@@ -184,3 +189,67 @@ def test_failure_reason_saved_without_discarding_existing_additions(monkeypatch)
     assert report['result']=='download_failed'
     assert report['reason_counts']['登录未确认：two_factor_required']==1
     assert records['existing']['size']==42
+
+
+def test_old_qb_does_not_accept_unconfirmed_hash(download_env, monkeypatch):
+    p,q,_,t,_ = download_env
+    q.add_torrent.return_value = (True,[])
+    p._content_info_hash = Mock(return_value='missing')
+    q.get_torrents.return_value = ([{'hash':'unrelated'}],False)
+    monkeypatch.setattr(module.time,'sleep',lambda _:None)
+    assert p._BrushFlow__download(t) is None
+    assert q.get_torrents.call_count == 5
+    q.get_torrent_id_by_tag.assert_not_called()
+
+
+def test_hash_resolution_from_file_and_magnets():
+    import base64
+    content = b'd8:announce21:https://example.org/14:infod6:lengthi10e4:name4:test12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee'
+    expected = module.Torrent.from_string(content).info_hash.lower()
+    resolve = module.BrushFlow._content_info_hash
+    assert resolve(content) == expected
+    assert resolve('magnet:?xt=urn:btih:'+expected.upper()) == expected
+    encoded = base64.b32encode(bytes.fromhex(expected)).decode()
+    assert resolve('magnet:?xt=urn:btih:'+encoded) == expected
+    assert resolve(b'<html>not torrent</html>') is None
+    assert resolve('https://example.org/download.php') is None
+
+
+def test_internal_ownership_prevents_other_task_adoption(monkeypatch):
+    p = object.__new__(module.BrushFlow)
+    first, second, other = task(id='first'),task(id='second'),task(id='other',downloader='other-qb')
+    p._task_configs = {t.id:t for t in (first,second,other)}
+    p._BrushFlow__get_hash = Mock(return_value='hash')
+    p._BrushFlow__get_label = Mock(return_value=['刷流'])
+    p._BrushFlow__get_site_by_torrent = Mock(return_value=(26,'杜比'))
+    p._get_task_data = Mock(side_effect=lambda tid,key: {'hash':{}} if tid=='second' else {})
+    assert not p._is_primary_task_for_torrent(first,{})
+    assert p._is_primary_task_for_torrent(second,{})
+    assert p._is_primary_task_for_torrent(other,{})  # independent downloader
+    p._get_task_data = Mock(return_value={})
+    assert p._is_primary_task_for_torrent(first,{})
+    assert not p._is_primary_task_for_torrent(second,{})
+
+
+def test_downloading_count_uses_task_hashes(download_env):
+    p,q,_,_,_ = download_env
+    p._get_task_data = Mock(return_value={'a':{},'b':{},'deleted':{'deleted':True}})
+    q.get_downloading_torrents.return_value = [{'hash':'a'},{'hash':'foreign'}]
+    assert p._BrushFlow__get_downloading_count() == 1
+    q.get_downloading_torrents.assert_called_once_with(ids=['a','b'],tags='刷流')
+    p._get_task_data.return_value = {}
+    q.get_downloading_torrents.reset_mock()
+    assert p._BrushFlow__get_downloading_count() == 0
+    q.get_downloading_torrents.assert_not_called()
+
+
+def test_removing_unique_tag_keeps_existing_ownership(download_env):
+    p,q,_,_,_ = download_env
+    p._save_current_task_data = Mock()
+    p._BrushFlow__log_and_send_torrent_task_update_message = Mock()
+    rows = {'a':{'deleted':False}}
+    unmanaged = {}
+    p._BrushFlow__update_seeding_tasks_based_on_tags(rows,unmanaged,{'a':{'hash':'a','tags':'刷流, 已整理'}})
+    assert 'a' in rows and not unmanaged
+    p._BrushFlow__update_seeding_tasks_based_on_tags(rows,unmanaged,{'a':{'hash':'a','tags':'已整理'}})
+    assert 'a' not in rows and 'a' in unmanaged
