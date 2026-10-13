@@ -3,12 +3,13 @@
     "name": "站点刷流",
     "description": "基于原 5.2.3 的 fork，任务内配置杜比 TOTP，下载验证异常时自动认证并重试",
     "labels": "刷流,杜比,TOTP",
-    "version": "5.2.5",
+    "version": "5.2.6",
     "icon": "brush-flow.png",
     "author": "jxxghp,InfinityPacer,Seed680; lesir831 (TOTP fork)",
     "level": 2,
     "v2": true,
     "history": {
+      "v5.2.6": "修复下载页要求二次验证但控制面板仍可访问时跳过TOTP的问题；种子重试成功后才回写Cookie",
       "v5.2.5": "仅保留公共刷流标签；取消随机和任务ID标签；按内部Hash记录隔离任务及统计下载数量",
       "v5.2.4": "新增任务级杜比 TOTP 自动认证；校验种子内容；兼容 qB 添加结果元组；保留原任务与历史"
     },

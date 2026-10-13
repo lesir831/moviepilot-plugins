@@ -16,7 +16,7 @@ https://github.com/lesir831/moviepilot-plugins
 
 ### 站点刷流（TOTP fork）
 
-插件 ID：`BrushFlow`，版本 `5.2.5`。基于当前安装的原 5.2.3 源码 fork，
+插件 ID：`BrushFlow`，版本 `5.2.6`。基于当前安装的原 5.2.3 源码 fork，
 保留任务、历史和 Vue 工作台，在杜比任务的“高级”页面新增 TOTP 密钥。
 下载遇到两步验证时自动认证并重试，不安装独立插件、不包装全局 HTTP 方法。
 参见 [配置及限制](plugins/brushflow/README.md)。

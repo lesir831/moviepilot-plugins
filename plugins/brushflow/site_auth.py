@@ -152,8 +152,10 @@ class DolbySession:
                 pairs[k] = v
         return "; ".join(f"{k}={v}" for k, v in pairs.items())
 
-    def ensure_authenticated(self, persist):
-        response = self.request("GET", urljoin(self.base, "usercp.php"))
+    def ensure_authenticated(self, persist, challenge=None):
+        # A download-only challenge may coexist with a working account page.
+        # Submit the actual challenge instead of replacing it with a usercp probe.
+        response = challenge if challenge is not None else self.request("GET", urljoin(self.base, "usercp.php"))
         form = twofa_form(response)
         recovered = False
         if form is not None:
@@ -195,11 +197,18 @@ class DolbySession:
         response = self.request("GET", url)
         recovered = False
         if twofa_form(response) is not None:
-            response.close()
-            recovered = self.ensure_authenticated(persist)
+            pending_cookies = []
+            recovered = self.ensure_authenticated(pending_cookies.append, challenge=response)
             response = self.request("GET", url)  # exactly one retry after confirmed login
+        else:
+            pending_cookies = []
         try:
-            return validate_torrent(response), recovered
+            validate_torrent(response)
+            # A working usercp page alone does not prove download authorization.
+            # Persist only once the protected download actually returns a torrent.
+            if pending_cookies:
+                persist(pending_cookies[-1])
+            return response, recovered
         except RecoveryError:
             response.close()
             raise

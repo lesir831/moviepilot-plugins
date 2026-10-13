@@ -95,21 +95,21 @@ def test_rejected_code_does_not_persist_cookie():
 
 
 def test_download_recovers_and_retries_once():
-    c, s, _ = session_with(response(FORM), response(FORM), response(b'ok'),
+    c, s, _ = session_with(response(FORM), response(b'ok'),
                             response(ACCOUNT, 'usercp.php'), response(TORRENT, 'download.php'))
     persist = Mock()
     r, recovered = c.download(BASE+'download.php?id=7&downhash=secret', persist)
     assert recovered and r.content == TORRENT
     persist.assert_called_once()
-    assert s.request.call_count == 5
+    assert s.request.call_count == 4
 
 
 def test_second_challenge_does_not_loop():
-    c, s, _ = session_with(response(FORM), response(FORM), response(b'ok'),
+    c, s, _ = session_with(response(FORM), response(b'ok'),
                             response(ACCOUNT, 'usercp.php'), response(FORM))
     with pytest.raises(client.RecoveryError, match='two_factor_required'):
         c.download(BASE+'download.php?id=7', Mock())
-    assert s.request.call_count == 5
+    assert s.request.call_count == 4
 
 
 @pytest.mark.parametrize('body,status,kind', [
@@ -175,3 +175,37 @@ def test_scope_and_https_upgrade():
     assert not client.is_download('https://hddolby.com.evil.example/download.php')
     assert not client.is_download(BASE+'usercp.php')
     assert client.trusted_url('http://www.hddolby.com/download.php').startswith('https://')
+
+
+def test_download_challenge_is_submitted_even_when_account_page_is_healthy():
+    calls = []
+    c, s, loader = session_with()
+    persist = Mock()
+    def request(method, url, **kwargs):
+        calls.append((method, url, kwargs))
+        if url.endswith('usercp.php'):
+            return response(ACCOUNT, 'usercp.php')
+        if method == 'POST':
+            assert kwargs['data']['type'] == 'save'
+            assert len(kwargs['data']['2fa']) == 6
+            return response(b'<script>location.href="index.php"</script>')
+        if len(calls) == 1:
+            return response(FORM)
+        persist.assert_not_called()
+        return response(TORRENT, 'download.php')
+    s.request.side_effect = request
+    result, recovered = c.download(BASE+'download.php?id=7', persist)
+    assert recovered and result.content == TORRENT
+    assert [method for method,_,_ in calls] == ['GET','POST','GET','GET']
+    persist.assert_called_once()
+    loader.assert_called_once()
+
+
+def test_healthy_account_but_failed_download_does_not_persist_cookie():
+    c, s, _ = session_with(response(FORM), response(b'no'),
+                           response(ACCOUNT,'usercp.php'),response(FORM))
+    persist = Mock()
+    with pytest.raises(client.RecoveryError, match='two_factor_required'):
+        c.download(BASE+'download.php?id=7', persist)
+    persist.assert_not_called()
+    assert sum(call.args[0]=='POST' for call in s.request.call_args_list) == 1
